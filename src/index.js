@@ -61,6 +61,9 @@ async function gerWorkflowArtifacts() {
 }
 
 async function downloadArtifact(artifact){
+    const fs = require('fs');
+    const https = require('https');
+
     // Download the artifact using its url and save it to a local file under /tmp/artifacts/
     // Ensure the directory exists
     const dir = '/tmp/artifacts';
@@ -69,8 +72,6 @@ async function downloadArtifact(artifact){
     }
     // Download the artifact
     console.log(`Downloading artifact: ${artifact.name} from ${artifact.url}`);
-    const fs = require('fs');
-    const https = require('https');
     const filePath = `/tmp/artifacts/${artifact.name}`;
     return new Promise((resolve, reject) => {
         const file = fs.createWriteStream(filePath);
