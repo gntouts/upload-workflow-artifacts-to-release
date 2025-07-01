@@ -14,3 +14,5 @@ console.log(`Workflow Repo: ${workflowRepo}`);
 console.log(`Workflow Run ID: ${workflowRunID}`);
 console.log(`Release Repo: ${releaseRepo}`);
 console.log(`Release ID: ${releaseID}`);
+
+// const response = await octokit.request(`GET /repos/${owner}/${repo}`);
