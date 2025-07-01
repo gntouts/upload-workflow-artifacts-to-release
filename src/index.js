@@ -17,6 +17,24 @@ console.log(`Release ID: ${releaseID}`);
 
 async function gerWorkflowArtifacts() {
     try {
+//         curl -X GET https://api.github.com/repos/$TARGET_REPO/actions/runs/$RUN_ID/artifacts \
+        //   -H "Accept: application/vnd.github+json" \
+        //   -H "Authorization: Bearer $GITHUB_TOKEN" \
+        //   -H "X-GitHub-Api-Version: 2022-11-28"
+        response = await octokit.request(`GET /repos/${workflowRepo}/actions/runs`, {
+            headers: {
+                'X-GitHub-Api-Version': '2022-11-28'
+            }
+        });
+        const runs = response.data.workflow_runs;
+        if (runs.length === 0) {
+            console.log('No workflow runs found for this repository.');
+            return [];
+        }
+        console.log(`Found ${runs.length} workflow runs for repository ${workflowRepo}.`);
+        const runs_id = runs.map(run => run.id);
+        console.log(`Workflow Run IDs: ${runs_id.join(', ')}`);
+
         response = await octokit.request(`GET /repos/${workflowRepo}/actions/runs/${workflowRunID}/artifacts`, {
             headers: {
                 'X-GitHub-Api-Version': '2022-11-28'
