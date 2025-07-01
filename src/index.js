@@ -11,7 +11,6 @@ class GitHubActionError extends Error {
         this.cause = cause;
     }
 }
-
 // Input validation and initialization
 function validateInputs() {
     const inputs = {
@@ -400,7 +399,8 @@ async function main() {
                     const fileName = result.extractedFiles.length === 1
                         ? path.basename(extractedFile.extractedPath) // Single file: use original name
                         : `${result.artifact.name}_${path.basename(extractedFile.extractedPath)}`; // Multiple files: prefix with artifact name
-
+                    console.log(`Preparing to upload file: ${fileName}`);
+                    console.log(`Preparing to upload file: ${extractedFile}`);
                     const uploadResult = await uploadFileToRelease(
                         octokit,
                         inputs.releaseRepo,
