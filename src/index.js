@@ -71,8 +71,8 @@ async function downloadArtifact(artifact){
         fs.mkdirSync(dir, { recursive: true });
     }
     // Download the artifact
-    console.log(`Downloading artifact: ${artifact.name} from ${artifact.url}`);
-    const filePath = `/tmp/artifacts/${artifact.name}`;
+    console.log(`Downloading artifact: ${artifact.name} from ${artifact.archive_url}`);
+    const filePath = `/tmp/artifacts/${artifact.name}.zip`; // Assuming artifacts are zipped
     return new Promise((resolve, reject) => {
         const file = fs.createWriteStream(filePath);
         https.get(artifact.archive_url, (response) => {

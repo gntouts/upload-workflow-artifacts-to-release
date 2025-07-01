@@ -1,0 +1,20 @@
+{
+  "id": 3444842766,
+  "node_id": "MDg6QXJ0aWZhY3QzNDQ0ODQyNzY2",
+  "name": "artifacts-16011372543",
+  "size_in_bytes": 1465115,
+  "url": "https://api.github.com/repos/gntouts/release-action-child1/actions/artifacts/3444842766",
+  "archive_download_url": "https://api.github.com/repos/gntouts/release-action-child1/actions/artifacts/3444842766/zip",
+  "expired": false,
+  "digest": "sha256:7ccd63b59cf41806323114a4e8fd02e6d17906129ef73185526d92b5194571fd",
+  "created_at": "2025-07-01T22:19:45Z",
+  "updated_at": "2025-07-01T22:19:45Z",
+  "expires_at": "2025-07-31T22:19:45Z",
+  "workflow_run": {
+    "id": 16011372543,
+    "repository_id": 1008298518,
+    "head_repository_id": 1008298518,
+    "head_branch": "v0.1.2",
+    "head_sha": "5b65fedbd500630c2072cff8dd47bb3f632e0e4b"
+  }
+}
