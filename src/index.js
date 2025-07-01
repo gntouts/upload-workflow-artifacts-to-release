@@ -17,7 +17,7 @@ console.log(`Release ID: ${releaseID}`);
 
 async function gerWorkflowArtifacts() {
     try {
-        response = await octokit.request(`GET /repos/${workflowRepo}/actions/runs/{workflowRunID}/artifacts`, {
+        response = await octokit.request(`GET /repos/${workflowRepo}/actions/runs/${workflowRunID}/artifacts`, {
             headers: {
                 'X-GitHub-Api-Version': '2022-11-28'
             }
