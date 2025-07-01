@@ -15,7 +15,7 @@ console.log(`Workflow Run ID: ${workflowRunID}`);
 console.log(`Release Repo: ${releaseRepo}`);
 console.log(`Release ID: ${releaseID}`);
 
-async function gerReleaseArtifacts() {
+async function gerWorkflowArtifacts() {
     try {
         response = await octokit.request(`GET /repos/${workflowRepo}/actions/runs/{workflowRunID}/artifacts`, {
             headers: {
@@ -42,16 +42,46 @@ async function gerReleaseArtifacts() {
     }
 }
 
+async function downloadArtifact(artifact){
+    // Download the artifact using its url and save it to a local file under /tmp/artifacts/
+    // Ensure the directory exists
+    const dir = '/tmp/artifacts';
+    if (!fs.existsSync(dir)){
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    // Download the artifact
+    console.log(`Downloading artifact: ${artifact.name} from ${artifact.url}`);
+    const fs = require('fs');
+    const https = require('https');
+    const filePath = `/tmp/artifacts/${artifact.name}`;
+    return new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(filePath);
+        https.get(artifact.archive_url, (response) => {
+            if (response.statusCode !== 200) {
+                reject(new Error(`Failed to download artifact: ${response.statusCode}`));
+            }
+            response.pipe(file);
+            file.on('finish', () => {
+                file.close(() => resolve(filePath));
+            });
+        }).on('error', (err) => {
+            fs.unlink(filePath, () => reject(err));
+        });
+    });
+}
+
 async function main(){
     try {
-        const artifacts = await gerReleaseArtifacts();
+        const artifacts = await gerWorkflowArtifacts();
         if (artifacts.length === 0) {
             console.log('No artifacts to upload.');
             return;
         }
 
         for (const artifact of artifacts) {
-            console.log(`Uploading artifact: ${artifact.name} (${artifact.size} bytes)`);
+            console.log(`Downloading artifact: ${artifact.name} (${artifact.size} bytes)`);
+            const localPath = await downloadArtifact(artifact);
+            console.log(`Artifact downloaded to: ${localPath}`);
             // Here you would implement the logic to upload the artifact to the release
             // For example, using octokit.rest.repos.uploadReleaseAsset
             // await octokit.rest.repos.uploadReleaseAsset({
