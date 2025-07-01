@@ -9,7 +9,10 @@ inputs:
   run_id:
     description: "The ID of the workflow the artifacts belong to"
     required: true
-  remote_repo:
+  workflow_repo:
+    description: "The repistory where the workflow was run"
+    required: true
+  release_repo:
     description: "The remote repository the release belongs to"
     required: true
   release_id:

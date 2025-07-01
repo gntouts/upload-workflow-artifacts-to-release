@@ -1,0 +1,17 @@
+name: Test My Action
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Run my local action
+        uses: ./
+        with:
+          run_id: '15889079088'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          remote_repo: 'gntouts/release-action-parent'
+          release_id: '15889079088'
