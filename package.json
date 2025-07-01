@@ -1,0 +1,25 @@
+{
+  "name": "upload-workflow-artifacts-to-release",
+  "version": "1.0.0",
+  "description": "This Github actions uploads artifacts from a Workflow run to a specific release",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gntouts/upload-workflow-artifacts-to-release.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/gntouts/upload-workflow-artifacts-to-release/issues"
+  },
+  "homepage": "https://github.com/gntouts/upload-workflow-artifacts-to-release#readme",
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/github": "^6.0.1"
+  }
+}

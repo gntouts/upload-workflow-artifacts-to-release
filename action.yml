@@ -1,0 +1,25 @@
+name: 'Upload workflow artifacts to specific release Action'
+description: 'This Action uploads or updates workflow artifacts to a specific release'
+author: 'Georgios Ntoutsos'
+branding:
+  icon: 'terminal'
+  color: 'blue'
+
+inputs:
+  run_id:
+    description: "The ID of the workflow the artifacts belong to"
+    required: true
+  remote_repo:
+    description: "The remote repository the release belongs to"
+    required: true
+  release_id:
+    description: "The ID of the target release"
+    required: true
+  token:
+    description: "A Github token with access to the workflow and the remote release"
+    required: true
+
+
+runs:
+  using: 'node20'
+  main: 'src/index.js'
