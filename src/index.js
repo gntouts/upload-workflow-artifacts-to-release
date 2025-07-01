@@ -1,8 +1,8 @@
 const { getInput, setFailed, info, warning, error } = require('@actions/core');
 const { Octokit } = require("@octokit/core");
 const fs = require('fs');
-const https = require('https');
 const path = require('path');
+const yauzl = require('yauzl');
 
 class GitHubActionError extends Error {
     constructor(message, cause) {
@@ -53,7 +53,7 @@ function initializeOctokit(token) {
 async function getWorkflowArtifacts(octokit, workflowRepo, workflowRunID) {
     try {
         info(`Fetching artifacts for workflow run ${workflowRunID} in repository ${workflowRepo}`);
-        
+
         const response = await octokit.request(`GET /repos/${workflowRepo}/actions/runs/${workflowRunID}/artifacts`, {
             headers: {
                 'X-GitHub-Api-Version': '2022-11-28'
@@ -61,20 +61,20 @@ async function getWorkflowArtifacts(octokit, workflowRepo, workflowRunID) {
         });
 
         const artifacts = response.data.artifacts;
-        
+
         if (!artifacts || artifacts.length === 0) {
             warning('No artifacts found for this workflow run');
             return [];
         }
 
         info(`Found ${artifacts.length} artifacts for workflow run ${workflowRunID}`);
-        
+
         return artifacts.map(artifact => {
             if (!artifact.id || !artifact.name || !artifact.archive_download_url) {
                 warning(`Artifact missing required fields: ${JSON.stringify(artifact)}`);
                 return null;
             }
-            
+
             return {
                 id: artifact.id,
                 name: artifact.name,
@@ -83,7 +83,7 @@ async function getWorkflowArtifacts(octokit, workflowRepo, workflowRunID) {
                 archive_url: artifact.archive_download_url
             };
         }).filter(Boolean); // Remove null entries
-        
+
     } catch (err) {
         if (err.status === 404) {
             throw new GitHubActionError(`Workflow run ${workflowRunID} not found in repository ${workflowRepo}`);
@@ -97,8 +97,8 @@ async function getWorkflowArtifacts(octokit, workflowRepo, workflowRunID) {
     }
 }
 
-async function downloadArtifact(artifact, token, downloadDir = './archived-artifacts') {
-    if (!artifact || !artifact.name || !artifact.archive_url) {
+async function downloadArtifact(octokit, workflowRepo, artifact, downloadDir = './archived-artifacts') {
+    if (!artifact || !artifact.name || !artifact.id) {
         throw new GitHubActionError('Invalid artifact object provided');
     }
 
@@ -112,130 +112,224 @@ async function downloadArtifact(artifact, token, downloadDir = './archived-artif
         // Sanitize filename to prevent path traversal
         const sanitizedName = artifact.name.replace(/[^a-zA-Z0-9_.-]/g, '_');
         const filePath = path.join(downloadDir, `${sanitizedName}.zip`);
-        
+
         info(`Downloading artifact: ${artifact.name} (${artifact.size} bytes) to ${filePath}`);
 
+        const [owner, repo] = workflowRepo.split('/');
+
+        // Use Octokit to download the artifact
+        const response = await octokit.request('GET /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/{archive_format}', {
+            owner,
+            repo,
+            artifact_id: artifact.id,
+            archive_format: 'zip',
+            headers: {
+                'X-GitHub-Api-Version': '2022-11-28'
+            }
+        });
+
+        // The response.data will be an ArrayBuffer containing the zip file
+        const buffer = Buffer.from(response.data);
+
+        // Write the buffer to file
+        await fs.promises.writeFile(filePath, buffer);
+
+        info(`Successfully downloaded ${artifact.name}: ${buffer.length} bytes`);
+        return filePath;
+
+    } catch (err) {
+        // Clean up partial file if it exists
+        const sanitizedName = artifact.name.replace(/[^a-zA-Z0-9_.-]/g, '_');
+        const filePath = path.join(downloadDir, `${sanitizedName}.zip`);
+
+        if (fs.existsSync(filePath)) {
+            try {
+                fs.unlinkSync(filePath);
+            } catch (unlinkErr) {
+                warning(`Failed to cleanup incomplete download: ${unlinkErr.message}`);
+            }
+        }
+
+        if (err.status === 404) {
+            throw new GitHubActionError(`Artifact ${artifact.name} (ID: ${artifact.id}) not found or expired`);
+        } else if (err.status === 403) {
+            throw new GitHubActionError(`Access denied downloading artifact ${artifact.name}. Check token permissions`);
+        } else if (err.status === 410) {
+            throw new GitHubActionError(`Artifact ${artifact.name} has expired and is no longer available for download`);
+        } else {
+            throw new GitHubActionError(`Failed to download artifact ${artifact.name}: ${err.message}`, err);
+        }
+    }
+}
+
+async function extractArtifact(zipFilePath, extractDir) {
+    const extractedFiles = [];
+
+    try {
+        info(`Extracting artifact: ${zipFilePath} to ${extractDir}`);
+
+        // Ensure extraction directory exists
+        if (!fs.existsSync(extractDir)) {
+            fs.mkdirSync(extractDir, { recursive: true });
+        }
+
         return new Promise((resolve, reject) => {
-            const file = fs.createWriteStream(filePath);
-            const timeoutMs = 300000; // 5 minutes timeout
-            
-            const cleanup = () => {
-                if (file && !file.destroyed) {
-                    file.destroy();
-                }
-                if (fs.existsSync(filePath)) {
-                    try {
-                        fs.unlinkSync(filePath);
-                    } catch (unlinkErr) {
-                        warning(`Failed to cleanup incomplete download: ${unlinkErr.message}`);
-                    }
-                }
-            };
-
-            const timeout = setTimeout(() => {
-                cleanup();
-                reject(new GitHubActionError(`Download timeout after ${timeoutMs}ms for artifact: ${artifact.name}`));
-            }, timeoutMs);
-
-            const request = https.get(artifact.archive_url, {
-                headers: {
-                    'Accept': 'application/vnd.github+json',
-                    'Authorization': `Bearer ${token}`,
-                    'User-Agent': 'GitHub-Action-Artifact-Downloader'
-                },
-                timeout: 30000 // Connection timeout
-            }, (response) => {
-                clearTimeout(timeout);
-                
-                if (response.statusCode === 302 || response.statusCode === 301) {
-                    // Handle redirect
-                    const redirectUrl = response.headers.location;
-                    if (redirectUrl) {
-                        response.destroy();
-                        // Recursive call with redirect URL
-                        downloadArtifact({ ...artifact, archive_url: redirectUrl }, token, downloadDir)
-                            .then(resolve)
-                            .catch(reject);
-                        return;
-                    }
-                }
-                
-                if (response.statusCode !== 200) {
-                    cleanup();
-                    reject(new GitHubActionError(`Failed to download artifact ${artifact.name}: HTTP ${response.statusCode} ${response.statusMessage}`));
+            yauzl.open(zipFilePath, { lazyEntries: true }, (err, zipfile) => {
+                if (err) {
+                    reject(new GitHubActionError(`Failed to open zip file ${zipFilePath}: ${err.message}`, err));
                     return;
                 }
 
-                let downloadedBytes = 0;
-                response.on('data', (chunk) => {
-                    downloadedBytes += chunk.length;
+                zipfile.readEntry();
+
+                zipfile.on('entry', (entry) => {
+                    // Sanitize entry filename to prevent path traversal
+                    const sanitizedFileName = entry.fileName.replace(/\.\./g, '').replace(/^\/+/, '');
+                    const outputPath = path.join(extractDir, sanitizedFileName);
+
+                    // Ensure the output path is within the extraction directory
+                    if (!outputPath.startsWith(extractDir)) {
+                        warning(`Skipping potentially dangerous path: ${entry.fileName}`);
+                        zipfile.readEntry();
+                        return;
+                    }
+
+                    if (/\/$/.test(entry.fileName)) {
+                        // Directory entry
+                        if (!fs.existsSync(outputPath)) {
+                            fs.mkdirSync(outputPath, { recursive: true });
+                        }
+                        zipfile.readEntry();
+                    } else {
+                        // File entry
+                        // Ensure parent directory exists
+                        const parentDir = path.dirname(outputPath);
+                        if (!fs.existsSync(parentDir)) {
+                            fs.mkdirSync(parentDir, { recursive: true });
+                        }
+
+                        zipfile.openReadStream(entry, (err, readStream) => {
+                            if (err) {
+                                reject(new GitHubActionError(`Failed to read entry ${entry.fileName}: ${err.message}`, err));
+                                return;
+                            }
+
+                            const writeStream = fs.createWriteStream(outputPath);
+
+                            writeStream.on('error', (err) => {
+                                reject(new GitHubActionError(`Failed to write file ${outputPath}: ${err.message}`, err));
+                            });
+
+                            writeStream.on('close', () => {
+                                extractedFiles.push({
+                                    originalName: entry.fileName,
+                                    extractedPath: outputPath,
+                                    size: fs.statSync(outputPath).size
+                                });
+                                zipfile.readEntry();
+                            });
+
+                            readStream.pipe(writeStream);
+                        });
+                    }
                 });
 
-                response.pipe(file);
-
-                file.on('finish', () => {
-                    file.close(() => {
-                        info(`Successfully downloaded ${artifact.name}: ${downloadedBytes} bytes`);
-                        resolve(filePath);
-                    });
+                zipfile.on('end', () => {
+                    info(`Successfully extracted ${extractedFiles.length} files from ${zipFilePath}`);
+                    resolve(extractedFiles);
                 });
 
-                file.on('error', (err) => {
-                    cleanup();
-                    reject(new GitHubActionError(`File write error for ${artifact.name}: ${err.message}`, err));
+                zipfile.on('error', (err) => {
+                    reject(new GitHubActionError(`Zip file processing error: ${err.message}`, err));
                 });
-            });
-
-            request.on('error', (err) => {
-                clearTimeout(timeout);
-                cleanup();
-                reject(new GitHubActionError(`Network error downloading ${artifact.name}: ${err.message}`, err));
-            });
-
-            request.on('timeout', () => {
-                clearTimeout(timeout);
-                request.destroy();
-                cleanup();
-                reject(new GitHubActionError(`Connection timeout downloading ${artifact.name}`));
             });
         });
 
     } catch (err) {
-        throw new GitHubActionError(`Failed to download artifact ${artifact.name}: ${err.message}`, err);
+        throw new GitHubActionError(`Failed to extract artifact ${zipFilePath}: ${err.message}`, err);
     }
 }
 
-async function uploadArtifactToRelease(octokit, releaseRepo, releaseID, filePath, artifactName) {
+function getContentType(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    const contentTypes = {
+        '.txt': 'text/plain',
+        '.json': 'application/json',
+        '.xml': 'application/xml',
+        '.html': 'text/html',
+        '.css': 'text/css',
+        '.js': 'application/javascript',
+        '.pdf': 'application/pdf',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.svg': 'image/svg+xml',
+        '.zip': 'application/zip',
+        '.tar': 'application/x-tar',
+        '.gz': 'application/gzip',
+        '.exe': 'application/octet-stream',
+        '.dll': 'application/octet-stream',
+        '.so': 'application/octet-stream',
+        '.dylib': 'application/octet-stream'
+    };
+    return contentTypes[ext] || 'application/octet-stream';
+}
+
+async function uploadFileToRelease(octokit, releaseRepo, releaseID, filePath, fileName) {
     try {
         const [owner, repo] = releaseRepo.split('/');
         const fileStats = fs.statSync(filePath);
         const fileStream = fs.createReadStream(filePath);
+        const contentType = getContentType(filePath);
 
-        info(`Uploading ${artifactName} to release ${releaseID} in ${releaseRepo}`);
+        info(`Uploading ${fileName} (${fileStats.size} bytes) to release ${releaseID} in ${releaseRepo}`);
 
         const response = await octokit.request('POST /repos/{owner}/{repo}/releases/{release_id}/assets', {
             owner,
             repo,
             release_id: parseInt(releaseID),
-            name: `${artifactName}.zip`,
+            name: fileName,
             data: fileStream,
             headers: {
-                'Content-Type': 'application/zip',
+                'Content-Type': contentType,
                 'Content-Length': fileStats.size,
                 'X-GitHub-Api-Version': '2022-11-28'
             }
         });
 
-        info(`Successfully uploaded ${artifactName} to release. Asset ID: ${response.data.id}`);
+        info(`Successfully uploaded ${fileName} to release. Asset ID: ${response.data.id}`);
         return response.data;
 
     } catch (err) {
         if (err.status === 404) {
             throw new GitHubActionError(`Release ${releaseID} not found in repository ${releaseRepo}`);
         } else if (err.status === 422) {
-            throw new GitHubActionError(`Asset upload failed - possibly duplicate name or invalid release: ${err.message}`);
+            if (err.message.includes('already_exists')) {
+                warning(`Asset ${fileName} already exists in release, skipping upload`);
+                return null; // Not an error, just skip
+            }
+            throw new GitHubActionError(`Asset upload failed - possibly invalid release: ${err.message}`);
         } else {
-            throw new GitHubActionError(`Failed to upload ${artifactName} to release: ${err.message}`, err);
+            throw new GitHubActionError(`Failed to upload ${fileName} to release: ${err.message}`, err);
+        }
+    }
+}
+
+async function cleanupFiles(filePaths) {
+    for (const filePath of filePaths) {
+        try {
+            if (fs.existsSync(filePath)) {
+                const stats = fs.statSync(filePath);
+                if (stats.isDirectory()) {
+                    fs.rmSync(filePath, { recursive: true, force: true });
+                } else {
+                    fs.unlinkSync(filePath);
+                }
+                info(`Cleaned up: ${filePath}`);
+            }
+        } catch (cleanupErr) {
+            warning(`Failed to cleanup ${filePath}: ${cleanupErr.message}`);
         }
     }
 }
@@ -257,7 +351,7 @@ async function main() {
 
         // Get artifacts
         const artifacts = await getWorkflowArtifacts(octokit, inputs.workflowRepo, inputs.workflowRunID);
-        
+
         if (artifacts.length === 0) {
             info('No artifacts to process. Exiting successfully.');
             return;
@@ -266,65 +360,97 @@ async function main() {
         const downloadResults = [];
         const uploadResults = [];
 
-        // Download artifacts with error handling for individual artifacts
+        // Download and extract artifacts with error handling for individual artifacts
         for (const artifact of artifacts) {
             try {
-                const localPath = await downloadArtifact(artifact, inputs.token);
-                downloadResults.push({ artifact, localPath, success: true });
+                // Download the artifact using Octokit
+                const zipPath = await downloadArtifact(octokit, inputs.workflowRepo, artifact);
+
+                // Extract the artifact
+                const extractDir = path.join('./extracted-artifacts', artifact.name);
+                const extractedFiles = await extractArtifact(zipPath, extractDir);
+
+                downloadResults.push({
+                    artifact,
+                    zipPath,
+                    extractDir,
+                    extractedFiles,
+                    success: true
+                });
+
+                info(`Successfully processed artifact ${artifact.name}: ${extractedFiles.length} files extracted`);
+
             } catch (err) {
-                error(`Failed to download artifact ${artifact.name}: ${err.message}`);
+                error(`Failed to process artifact ${artifact.name}: ${err.message}`);
                 downloadResults.push({ artifact, error: err, success: false });
                 // Continue with other artifacts instead of failing completely
             }
         }
 
-        // Upload successful downloads to release
+        // Upload extracted files to release
         for (const result of downloadResults) {
             if (!result.success) continue;
 
-            try {
-                await uploadArtifactToRelease(
-                    octokit,
-                    inputs.releaseRepo,
-                    inputs.releaseID,
-                    result.localPath,
-                    result.artifact.name
-                );
-                uploadResults.push({ artifact: result.artifact, success: true });
-                
-                // Clean up downloaded file after successful upload
+            let uploadedCount = 0;
+            const filesToCleanup = [result.zipPath, result.extractDir];
+
+            for (const extractedFile of result.extractedFiles) {
                 try {
-                    fs.unlinkSync(result.localPath);
-                    info(`Cleaned up temporary file: ${result.localPath}`);
-                } catch (cleanupErr) {
-                    warning(`Failed to cleanup file ${result.localPath}: ${cleanupErr.message}`);
+                    // Create a meaningful filename that includes the artifact name
+                    const fileName = result.extractedFiles.length === 1
+                        ? path.basename(extractedFile.extractedPath) // Single file: use original name
+                        : `${result.artifact.name}_${path.basename(extractedFile.extractedPath)}`; // Multiple files: prefix with artifact name
+
+                    const uploadResult = await uploadFileToRelease(
+                        octokit,
+                        inputs.releaseRepo,
+                        inputs.releaseID,
+                        extractedFile.extractedPath,
+                        fileName
+                    );
+
+                    if (uploadResult) { // uploadResult is null if file already exists (not an error)
+                        uploadedCount++;
+                    }
+
+                } catch (err) {
+                    error(`Failed to upload file ${extractedFile.originalName} from artifact ${result.artifact.name}: ${err.message}`);
                 }
-                
-            } catch (err) {
-                error(`Failed to upload artifact ${result.artifact.name}: ${err.message}`);
-                uploadResults.push({ artifact: result.artifact, error: err, success: false });
             }
+
+            uploadResults.push({
+                artifact: result.artifact,
+                uploadedCount,
+                totalFiles: result.extractedFiles.length,
+                success: uploadedCount > 0 || result.extractedFiles.length === 0
+            });
+
+            // Clean up downloaded zip and extracted files
+            await cleanupFiles(filesToCleanup);
         }
 
         // Summary
         const successfulDownloads = downloadResults.filter(r => r.success).length;
         const successfulUploads = uploadResults.filter(r => r.success).length;
-        
-        info(`Summary: ${successfulDownloads}/${artifacts.length} downloads successful, ${successfulUploads}/${successfulDownloads} uploads successful`);
+        const totalFilesUploaded = uploadResults.reduce((sum, r) => sum + (r.uploadedCount || 0), 0);
 
-        // If no artifacts were successfully processed, fail the action
-        if (successfulUploads === 0 && artifacts.length > 0) {
-            throw new GitHubActionError('No artifacts were successfully uploaded to the release');
+        info(`Summary: ${successfulDownloads}/${artifacts.length} artifacts processed successfully`);
+        info(`${successfulUploads}/${successfulDownloads} artifacts had successful uploads`);
+        info(`Total files uploaded to release: ${totalFilesUploaded}`);
+
+        // If no files were successfully uploaded, fail the action
+        if (totalFilesUploaded === 0 && artifacts.length > 0) {
+            throw new GitHubActionError('No files were successfully uploaded to the release');
         }
 
     } catch (err) {
         const errorMessage = err instanceof GitHubActionError ? err.message : `Unexpected error: ${err.message}`;
         error(`Action failed: ${errorMessage}`);
-        
+
         if (err.cause) {
             error(`Caused by: ${err.cause.message}`);
         }
-        
+
         setFailed(errorMessage);
         process.exit(1);
     }
