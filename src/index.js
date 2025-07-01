@@ -64,21 +64,21 @@ async function downloadArtifact(artifact) {
     const fs = require('fs');
     const https = require('https');
 
-    // Download the artifact using its url and save it to a local file under /tmp/artifacts/
+    // Download the artifact using its url and save it to a local file under ./archived-artifacts
     // Ensure the directory exists
-    const dir = '/tmp/artifacts';
+    const dir = './archived-artifacts';
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
     // Download the artifact
     console.log(`Downloading artifact: ${artifact.name} from ${artifact.archive_url}`);
-    const filePath = `/tmp/artifacts/${artifact.name}.zip`; // Assuming artifacts are zipped
+    const filePath = `${dir}/${artifact.name}.zip`; // Assuming artifacts are zipped
     return new Promise((resolve, reject) => {
         const file = fs.createWriteStream(filePath);
         const headers = {
             'Accept': 'application/vnd.github+json',
             'Authorization': `Bearer ${token}`
-        }
+        };
         https.get({
             url: artifact.archive_url,
             headers: headers
