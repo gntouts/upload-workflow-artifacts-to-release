@@ -17,7 +17,7 @@ console.log(`Release ID: ${releaseID}`);
 
 async function gerWorkflowArtifacts() {
     try {
-//         curl -X GET https://api.github.com/repos/$TARGET_REPO/actions/runs/$RUN_ID/artifacts \
+        //         curl -X GET https://api.github.com/repos/$TARGET_REPO/actions/runs/$RUN_ID/artifacts \
         //   -H "Accept: application/vnd.github+json" \
         //   -H "Authorization: Bearer $GITHUB_TOKEN" \
         //   -H "X-GitHub-Api-Version: 2022-11-28"
@@ -60,14 +60,14 @@ async function gerWorkflowArtifacts() {
     }
 }
 
-async function downloadArtifact(artifact){
+async function downloadArtifact(artifact) {
     const fs = require('fs');
     const https = require('https');
 
     // Download the artifact using its url and save it to a local file under /tmp/artifacts/
     // Ensure the directory exists
     const dir = '/tmp/artifacts';
-    if (!fs.existsSync(dir)){
+    if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
     // Download the artifact
@@ -75,7 +75,14 @@ async function downloadArtifact(artifact){
     const filePath = `/tmp/artifacts/${artifact.name}.zip`; // Assuming artifacts are zipped
     return new Promise((resolve, reject) => {
         const file = fs.createWriteStream(filePath);
-        https.get(artifact.archive_url, (response) => {
+        const headers = {
+            'Accept': 'application/vnd.github+json',
+            'Authorization': `Bearer ${token}`
+        }
+        https.get({
+            url: artifact.archive_url,
+            headers: headers
+        }, (response) => {
             if (response.statusCode !== 200) {
                 reject(new Error(`Failed to download artifact: ${response.statusCode}`));
             }
@@ -89,7 +96,7 @@ async function downloadArtifact(artifact){
     });
 }
 
-async function main(){
+async function main() {
     try {
         const artifacts = await gerWorkflowArtifacts();
         if (artifacts.length === 0) {
